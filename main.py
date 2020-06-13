@@ -28,11 +28,11 @@ import json
 import cv2
 
 import logging as log
-import paho.mqtt.client as mqtt
+#import paho.mqtt.client as mqtt
 
 from argparse import ArgumentParser
 from inference import Network
-from handlers import preprocessing
+from handlers import preprocessing, create_output_image, pathToName, handle_output
 
 # MQTT server environment variables
 HOSTNAME = socket.gethostname()
@@ -41,8 +41,8 @@ MQTT_HOST = IPADDRESS
 MQTT_PORT = 3001
 MQTT_KEEPALIVE_INTERVAL = 60
 CPU_EXT=None
-DEVICE="CPU"
-MODEL_SRC="./ssd_mobilenet_v2_FP16.xml"
+
+#MODEL_SRC="./ssd_mobilenet_v2_FP16.xml"
 
 
 
@@ -53,10 +53,11 @@ def build_argparser():
     :return: command line arguments
     """
     parser = ArgumentParser()
-    parser.add_argument("-m", "--model", required=True, type=str,
-                        help="Path to an xml file with a trained model.")
     parser.add_argument("-i", "--input", required=True, type=str,
                         help="Path to image or video file")
+    parser.add_argument("-m", "--model", required=False, type=str,
+                        default="./models/ssd_mobilenet_v2_FP16.xml",
+                        help="Path to an xml file with a trained model.")
     parser.add_argument("-l", "--cpu_extension", required=False, type=str,
                         default=None,
                         help="MKLDNN (CPU)-targeted custom layers."
@@ -95,17 +96,28 @@ def infer_on_stream(args, client):
     prob_threshold = args.prob_threshold
 
     ### TODO: Load the model through `infer_network` ###
-    n,c,h,w = inference_network.load_model(MODEL_SRC, args.device, args.cpu_extension)
+    model_name = pathToName(args.model)
+    
+    infer_network.load_model(args.model, args.device, args.cpu_extension)
+    n,c,h,w = infer_network.get_input_shape()
     ### TODO: Handle the input stream ###
 
+    print("network loaded", h,w)
     ### TODO: Loop until stream is over ###
-
+    if 1==1:
         ### TODO: Read from the video capture ###
-
+        frame = cv2.imread(args.input)
         ### TODO: Pre-process the image as needed ###
         preprocessed_image = preprocessing(frame, h, w)
         ### TODO: Start asynchronous inference for specified request ###
-        inference_network.sync_inference(preprocessed_image)
+        output = infer_network.exec_sync(preprocessed_image)
+        processed_output = handle_output(model_name)(output, prob_threshold)
+
+        nPers, perVector = processed_output.shape
+        print("numero de personas: ", nPers)
+        
+        output_frame=create_output_image(model_name, frame, processed_output)
+        #output_frame=frame
         ### TODO: Wait for the result ###
 
             ### TODO: Get the results of the inference request ###
@@ -120,6 +132,7 @@ def infer_on_stream(args, client):
         ### TODO: Send the frame to the FFMPEG server ###
 
         ### TODO: Write an output image if `single_image_mode` ###
+        cv2.imwrite("./output_net.png", output_frame)
 
 
 def main():

@@ -46,16 +46,17 @@ class Network:
         ### TODO: Load the model ###
         self.network = IENetwork(model=model_xml, weights=model_bin)
         ### TODO: Check for supported layers ###
-        layers_map = plugin.query_network(network=self.network, device_name=device)
+        layers_map = self.plugin.query_network(network=self.network, device_name=device)
         ### TODO: Add any necessary extensions ###
-        if cpu_extension and "CPU" in device:
-            self.plugin.add_extension(cpu_extension, device)
+        if cpu_ext and "CPU" in device:
+            self.plugin.add_extension(cpu_ext, device)
         ### TODO: Return the loaded inference plugin ###
         self.exec_network = self.plugin.load_network(self.network, device)
         return self.exec_network
 
     def get_input_shape(self):
         ### TODO: Return the shape of the input layer ###
+        self.input_blob = next(iter(self.network.inputs))
         return self.network.inputs[self.input_blob].shape
     
     def exec_sync(self, image):
