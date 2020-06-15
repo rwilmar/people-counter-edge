@@ -125,8 +125,13 @@ def handle_output(model_type):
     else:
         return None
 
-def pathToName(path = "out.mp4"):
+def path_get_name(path = "out.mp4"):
     x = path.split("/")
     return x[-1].split(".")[0]
 
+def path_get_extension(path = "out.mp4"):
+    if len(path)==1: path=path+".0"
+    if (path=="CAM"): path = "0.0"
+    x = path.split("/")
+    return x[-1].split(".")[1]
         
