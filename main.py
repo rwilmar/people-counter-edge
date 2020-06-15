@@ -32,7 +32,8 @@ import logging as log
 
 from argparse import ArgumentParser
 from inference import Network
-from handlers import preprocessing, create_output_image, pathToName, handle_output
+from handlers import (preprocessing, create_output_image, path_get_extension,
+                    path_get_name, handle_output)
 
 # MQTT server environment variables
 HOSTNAME = socket.gethostname()
@@ -80,6 +81,18 @@ def connect_mqtt():
 
     return client
 
+def get_input_type(filename):
+    if len(filename)==1: filename=filename+".0"
+    ext=path_get_extension(filename)
+    switcher = { 
+        "bmp": "img", 
+        "jpg": "img", 
+        "png": "img", 
+        "m4v": "video", 
+        "mp4": "video", 
+        "0": "video",
+    } 
+    return switcher.get(ext, "invalid") 
 
 def infer_on_stream(args, client):
     """
@@ -96,43 +109,93 @@ def infer_on_stream(args, client):
     prob_threshold = args.prob_threshold
 
     ### TODO: Load the model through `infer_network` ###
-    model_name = pathToName(args.model)
-    
+    model_name = path_get_name(args.model)
     infer_network.load_model(args.model, args.device, args.cpu_extension)
     n,c,h,w = infer_network.get_input_shape()
-    ### TODO: Handle the input stream ###
 
+    ### TODO: Handle the input stream ###
+    input_type=get_input_type(args.input)
+    frame = None
+    count_history=[]
+    people_frame = 0
+    people_past = 0
+    total_people = 0
+    
     print("network loaded", h,w)
-    ### TODO: Loop until stream is over ###
-    if 1==1:
-        ### TODO: Read from the video capture ###
+
+    print ("tipo: ", input_type)
+    if input_type=="img":
         frame = cv2.imread(args.input)
-        ### TODO: Pre-process the image as needed ###
         preprocessed_image = preprocessing(frame, h, w)
-        ### TODO: Start asynchronous inference for specified request ###
         output = infer_network.exec_sync(preprocessed_image)
         processed_output = handle_output(model_name)(output, prob_threshold)
-
-        nPers, perVector = processed_output.shape
-        print("numero de personas: ", nPers)
-        
-        output_frame=create_output_image(model_name, frame, processed_output)
-        #output_frame=frame
-        ### TODO: Wait for the result ###
-
-            ### TODO: Get the results of the inference request ###
-
-            ### TODO: Extract any desired stats from the results ###
-
-            ### TODO: Calculate and send relevant information on ###
-            ### current_count, total_count and duration to the MQTT server ###
-            ### Topic "person": keys of "count" and "total" ###
-            ### Topic "person/duration": key of "duration" ###
-
-        ### TODO: Send the frame to the FFMPEG server ###
+        people_frame, perVector = processed_output.shape
+        print("numero de personas: ", people_frame)
 
         ### TODO: Write an output image if `single_image_mode` ###
+        output_frame=create_output_image(model_name, frame, processed_output)
         cv2.imwrite("./output_net.png", output_frame)
+
+    elif input_type=="video":
+        capture = cv2.VideoCapture(args.input, cv2.CAP_FFMPEG)
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        print("fps:",fps)
+        if (capture.isOpened() == False): 
+            raise Exception("ERROR: Unable to open video file")
+        n=0
+        ### TODO: Loop until stream is over ###
+        while(capture.isOpened()):
+            n+=1
+            ### TODO: Read from the video capture ###
+            frame = cv2.imread(args.input)
+            ret, frame = capture.read()
+            if not ret:
+                print("Can't receive frame (video end?). Exiting ...")
+                break
+            if cv2.waitKey(1)==27: # exit on keyboard esc
+                break
+
+            ### TODO: Pre-process the image as needed ###
+            preprocessed_image = preprocessing(frame, h, w)
+            ### TODO: Start asynchronous inference for specified request ###
+            request_handler = infer_network.exec_net(preprocessed_image)
+            ### TODO: Wait for the result ###
+            while True:
+                status = infer_network.wait(request_handler)
+                if status == 0:
+                    break
+                else:
+                    print("waiting for inference . . .")
+                    time.sleep(1)
+            ### TODO: Get the results of the inference request ###
+            output = infer_network.get_output(request_handler)
+            processed_output = handle_output(model_name)(output, prob_threshold)
+            ### TODO: Extract any desired stats from the results ###
+            people_frame, perVector = processed_output.shape
+            
+            count_history.append(people_frame)
+            if len(count_history)>30: count_history.pop(0)
+            people_frame=sum(count_history)//len(count_history)
+            if (people_frame-people_past)>0:
+                total_people=total_people+(people_frame-people_past)
+            people_past=people_frame
+            
+                ### TODO: Calculate and send relevant information on ###
+                ### current_count, total_count and duration to the MQTT server ###
+                ### Topic "person": keys of "count" and "total" ###
+                ### Topic "person/duration": key of "duration" ###
+
+            ### TODO: Send the frame to the FFMPEG server ###
+            output_frame=create_output_image(model_name, frame, processed_output)
+            cv2.imwrite("./output_net.png", output_frame)
+            if n%30==0:
+                print(n, people_frame, total_people)
+        print("numero de personas frame:", people_frame)
+        print("numero personas total:", total_people)
+        capture.release()
+        cv2.destroyAllWindows()
+    else:
+        raise Exception("ERROR: invalid input filetype (only images .jpg, .png, and videos .mp4, .m4v are supported)")
 
 
 def main():
@@ -143,6 +206,8 @@ def main():
     """
     # Grab command line args
     args = build_argparser().parse_args()
+    if args.i == "CAM":
+        args.i=0
     # Connect to the MQTT server
     client = connect_mqtt()
     # Perform inference on the input stream
