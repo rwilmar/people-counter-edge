@@ -26,9 +26,10 @@ import time
 import socket
 import json
 import cv2
+import datetime
 
 import logging as log
-#import paho.mqtt.client as mqtt
+import paho.mqtt.client as mqtt
 
 from argparse import ArgumentParser
 from inference import Network
@@ -43,7 +44,6 @@ MQTT_PORT = 3001
 MQTT_KEEPALIVE_INTERVAL = 60
 CPU_EXT=None
 
-#MODEL_SRC="./ssd_mobilenet_v2_FP16.xml"
 
 
 
@@ -74,11 +74,21 @@ def build_argparser():
                         "(0.5 by default)")
     return parser
 
-
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code "+str(rc))
+    client.subscribe("$SYS/#")
+    
+def on_message(client, userdata, msg):
+    print(msg.topic+" "+str(msg.payload))
+    
 def connect_mqtt():
     ### TODO: Connect to the MQTT client ###
-    client = None
-
+    #client = None
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE_INTERVAL)
+    client.loop_start()    
     return client
 
 def get_input_type(filename):
@@ -108,12 +118,12 @@ def infer_on_stream(args, client):
     # Set Probability threshold for detections
     prob_threshold = args.prob_threshold
 
-    ### TODO: Load the model through `infer_network` ###
+    ### Load the model through `infer_network` ###
     model_name = path_get_name(args.model)
     infer_network.load_model(args.model, args.device, args.cpu_extension)
     n,c,h,w = infer_network.get_input_shape()
 
-    ### TODO: Handle the input stream ###
+    ### Handle the input stream ###
     input_type=get_input_type(args.input)
     frame = None
     count_history=[]
@@ -132,21 +142,25 @@ def infer_on_stream(args, client):
         people_frame, perVector = processed_output.shape
         print("numero de personas: ", people_frame)
 
-        ### TODO: Write an output image if `single_image_mode` ###
+        ### Write an output image if `single_image_mode` ###
         output_frame=create_output_image(model_name, frame, processed_output)
         cv2.imwrite("./output_net.png", output_frame)
 
     elif input_type=="video":
         capture = cv2.VideoCapture(args.input, cv2.CAP_FFMPEG)
         fps = capture.get(cv2.CAP_PROP_FPS)
+        if fps<1: fps=15 # error control for fps=0
         print("fps:",fps)
         if (capture.isOpened() == False): 
             raise Exception("ERROR: Unable to open video file")
         n=0
-        ### TODO: Loop until stream is over ###
+        frame_in=0
+        duration_history=[]
+        duration_avg=0
+        ### Loop until stream is over ###
         while(capture.isOpened()):
-            n+=1
-            ### TODO: Read from the video capture ###
+            n=n+1
+            ### Read from the video capture ###
             frame = cv2.imread(args.input)
             ret, frame = capture.read()
             if not ret:
@@ -155,11 +169,11 @@ def infer_on_stream(args, client):
             if cv2.waitKey(1)==27: # exit on keyboard esc
                 break
 
-            ### TODO: Pre-process the image as needed ###
+            ### Pre-process the image as needed ###
             preprocessed_image = preprocessing(frame, h, w)
-            ### TODO: Start asynchronous inference for specified request ###
+            ### Start asynchronous inference for specified request ###
             request_handler = infer_network.exec_net(preprocessed_image)
-            ### TODO: Wait for the result ###
+            ### Wait for the result ###
             while True:
                 status = infer_network.wait(request_handler)
                 if status == 0:
@@ -167,31 +181,47 @@ def infer_on_stream(args, client):
                 else:
                     print("waiting for inference . . .")
                     time.sleep(1)
-            ### TODO: Get the results of the inference request ###
+            ### Get the results of the inference request ###
             output = infer_network.get_output(request_handler)
             processed_output = handle_output(model_name)(output, prob_threshold)
-            ### TODO: Extract any desired stats from the results ###
+            
+            ### Extract any desired stats from the results ###
             people_frame, perVector = processed_output.shape
             
+            ### Additional Stats ###
             count_history.append(people_frame)
-            if len(count_history)>30: count_history.pop(0)
-            people_frame=sum(count_history)//len(count_history)
-            if (people_frame-people_past)>0:
-                total_people=total_people+(people_frame-people_past)
+            if len(count_history)>15: count_history.pop(0)
+            people_frame = sum(count_history)//len(count_history)
+            new_people = people_frame-people_past
             people_past=people_frame
             
-                ### TODO: Calculate and send relevant information on ###
-                ### current_count, total_count and duration to the MQTT server ###
-                ### Topic "person": keys of "count" and "total" ###
-                ### Topic "person/duration": key of "duration" ###
-
-            ### TODO: Send the frame to the FFMPEG server ###
+            if (new_people)>0: # added person
+                total_people=total_people+new_people
+                frame_in=n
+            duration_frames=n-frame_in
+            if (new_people<0): # person gone
+                duration_history.append(duration_frames)
+                duration_avg = sum(duration_history)/len(duration_history)
+                #print("duration avg:", duration_avg, n, frame_in)
+            
+            ### Calculate and send relevant information on ###
+            ### current_count, total_count and duration to the MQTT server ###
+            web_duration = 0
+            if people_frame>0: #
+                web_duration = duration_frames/fps
+            ### Topic "person": keys of "count" and "total" ###
+            current_count = json.dumps({"count":people_frame, "total":total_people})
+            client.publish("person", current_count)
+            ### Topic "person/duration": key of "duration" ###
+            duration = json.dumps({"duration" : web_duration})
+            client.publish("person/duration", duration)
+            
+            ### Send the frame to the FFMPEG server ###
             output_frame=create_output_image(model_name, frame, processed_output)
-            cv2.imwrite("./output_net.png", output_frame)
-            if n%30==0:
-                print(n, people_frame, total_people)
-        print("numero de personas frame:", people_frame)
-        print("numero personas total:", total_people)
+            sys.stdout.buffer.write(output_frame)
+            sys.stdout.flush()
+
+        print("total number people:", total_people)
         capture.release()
         cv2.destroyAllWindows()
     else:
@@ -206,8 +236,8 @@ def main():
     """
     # Grab command line args
     args = build_argparser().parse_args()
-    if args.i == "CAM":
-        args.i=0
+    if args.input == "CAM":
+        args.input=0
     # Connect to the MQTT server
     client = connect_mqtt()
     # Perform inference on the input stream
