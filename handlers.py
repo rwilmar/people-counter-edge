@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-import pandas as pd
+#import pandas as pd
 
 # takes frame picture from a video
 def getVideoFrame(videoFile, frameNumber, enableErrImg=True):
@@ -71,17 +71,15 @@ def create_output_image(model_type, image, output):
 
 
     if model_type == "person-detection-retail-0002":
-        print("returned")
-        # Get only text detections above 0.5 confidence, set to 255
-        #output = np.where(output[1][2]>0.5, output, 0)
+        #print("returned")
         nPers, perVector = output.shape
         print("numero de personas: ", nPers)
         
-        return draw_boxes(image, output, 0.4, w, h)
+        return draw_boxes(image, output, 0.1, w, h)
 
     elif model_type == "ssd_mobilenet_v2_FP16":
         
-        return draw_boxes(image, output, 0.4, w, h)
+        return draw_boxes(image, output, 0.1, w, h)
 
     else:
         print("Unknown model type, unable to create output image.")
@@ -109,9 +107,14 @@ def handle_personDet2(output, min_conf=0.1):
     for only the people class defined in the COCO trained dataset
     '''
     det_list=output['DetectionOutput'][0][0]
-    df1=pd.DataFrame(det_list, columns=['image_id', 'label', 'conf', 'x_min', 'y_min', 'x_max', 'y_max'])
-    people=df1[(df1['conf']>min_conf) & (df1['label']==1)] 
-    return people.to_numpy()
+    
+    #df1=pd.DataFrame(det_list, columns=['image_id', 'label', 'conf', 'x_min', 'y_min', 'x_max', 'y_max'])
+    #people=df1[(df1['conf']>min_conf) & (df1['label']==1)] 
+    #return people.to_numpy()
+
+    data=np.asarray(det_list)
+    mask = (data[:, 2] > min_conf) & (data[:, 1] == 1) 
+    return data[mask]
 
 def handle_output(model_type):
     '''
