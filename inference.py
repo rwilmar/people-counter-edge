@@ -38,28 +38,28 @@ class Network:
         self.plugin = IECore()
         self.input_blob = None
         self.exec_network = None
-        ### TODO: Initialize any class variables desired ###
+        ### Initialize any class variables desired ###
 
     def load_model(self, model, device, cpu_ext):
         model_xml = model
         model_bin = os.path.splitext(model_xml)[0] + ".bin"
-        ### TODO: Load the model ###
+        ###  Load the model ###
         self.network = IENetwork(model=model_xml, weights=model_bin)
-        ### TODO: Check for supported layers ###
+        ### Check for supported layers ###
         layers_map = self.plugin.query_network(network=self.network, device_name=device)
         unsupported_layers = [l for l in self.network.layers.keys() if l not in layers_map]
         if len(unsupported_layers) != 0:
             print("Unsupported layers found: {}".format(unsupported_layers))
             print("Trying to add CPU extensions to IECore.")
-        ### TODO: Add any necessary extensions ###
+        ### Add any necessary extensions ###
         if cpu_ext and "CPU" in device:
             self.plugin.add_extension(cpu_ext, device)
-        ### TODO: Return the loaded inference plugin ###
+        ### Return the loaded inference plugin ###
         self.exec_network = self.plugin.load_network(self.network, device)
         return self.exec_network
 
     def get_input_shape(self):
-        ### TODO: Return the shape of the input layer ###
+        ### Return the shape of the input layer ###
         self.input_blob = next(iter(self.network.inputs))
         return self.network.inputs[self.input_blob].shape
     
@@ -68,21 +68,19 @@ class Network:
         return self.exec_network.requests[0].outputs
 
     def exec_net(self, image):
-        ### TODO: Start an asynchronous request ###
+        ### Start an asynchronous request ###
         request_handler = self.exec_network.start_async(request_id=0, inputs={self.input_blob: image})
-        ### TODO: Return any necessary information ###
+        ### Return any necessary information ###
         return request_handler
-        ### Note: You may need to update the function parameters. ###
-
+        
     def wait(self, req_handler):
-        ### TODO: Wait for the request to be complete. ###
+        ### Wait for the request to be complete. ###
         #status = self.exec_network.requests[request_id].wait(-1)
         status = req_handler.wait(-1)
-        ### TODO: Return any necessary information ###
-        ### Note: You may need to update the function parameters. ###
+        ### Return any necessary information ###
         return status
 
     def get_output(self, req_handler):
-        ### TODO: Extract and return the output results
+        ### Extract and return the output results
         return req_handler.outputs
-        ### Note: You may need to update the function parameters. ###
+        
